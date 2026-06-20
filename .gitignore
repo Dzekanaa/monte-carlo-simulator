@@ -1,0 +1,14 @@
+# monte-carlo-simulator/.gitignore
+build/
+*.o
+*.exe
+*.out
+*.so
+*.dylib
+*.dll
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

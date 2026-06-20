@@ -1,3 +1,6 @@
 [submodule "slot-engine-cpp"]
 	path = slot-engine-cpp
 	url = https://github.com/Dzekanaa/slot-engine-cpp.git
+[submodule "slot-engine"]
+	path = slot-engine
+	url = https://github.com/Dzekanaa/slot-engine-cpp.git
