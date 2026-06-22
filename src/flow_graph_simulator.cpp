@@ -1,80 +1,196 @@
 #include "../include/flow_graph_simulator.h"
+#include <cmath>
+#include <iomanip>
+#include <iostream>
 
 using namespace tbb::flow;
 
-FlowGraphSimulator::FlowGraphSimulator(const SlotEngine::GameConfig &config,
-                                       int betPerSpin)
-    : m_config(config), m_betPerSpin(betPerSpin),
+// ---------------------------------------------------------------------
+// Component simulation helpers
+// ---------------------------------------------------------------------
 
-      m_spin_node(m_graph, unlimited, [this](int) { return GenerateSpin(0); }),
-      m_stats_node(
-          m_graph, unlimited,
-          [this](const SlotEngine::SpinResult &r) { return ProcessSpin(r); }),
-      m_report_node(m_graph, serial, [this](const SimulationStatistics &s) {
-        return ReportStats(s);
-      }) {
+SimulationStatistics FlowGraphSimulator::SimulateBaseComponent(int numSpins) {
+  SimulationStatistics stats;
+  stats.totalBet = static_cast<long long>(numSpins) * m_betPerSpin;
+  stats.totalSpins = numSpins;
 
-  // Connect the nodes
-  make_edge(m_spin_node, m_stats_node);
-  make_edge(m_stats_node, m_report_node);
+  auto engine = SlotEngine::CreateSlotEngine(m_config);
+
+  for (int i = 0; i < numSpins; ++i) {
+    auto result = engine->Spin();
+    stats.totalWin += result.totalWin;
+    stats.totalBaseWin += result.baseGameWin;
+    if (result.IsHit())
+      stats.hitCount++;
+    // Store every base win for variance calculation
+    stats.allWins.push_back(result.baseGameWin);
+  }
+  return stats;
 }
 
-SlotEngine::SpinResult FlowGraphSimulator::GenerateSpin(int) {
+SimulationStatistics FlowGraphSimulator::SimulateBonusComponent(int numSpins) {
+  SimulationStatistics stats;
+  stats.totalBet = static_cast<long long>(numSpins) * m_betPerSpin;
+  stats.totalSpins = numSpins;
+
   auto engine = SlotEngine::CreateSlotEngine(m_config);
-  return engine->Spin();
+
+  for (int i = 0; i < numSpins; ++i) {
+    auto result = engine->Spin();
+    stats.totalWin += result.bonusWin;
+    stats.totalBonusWin += result.bonusWin;
+  }
+  return stats;
 }
 
 SimulationStatistics
-FlowGraphSimulator::ProcessSpin(const SlotEngine::SpinResult &result) {
-  m_totalBet += m_betPerSpin;
-  m_totalWin += result.totalWin;
-  m_totalBaseWin += result.baseGameWin;
-  m_totalScatterWin += result.scatterWin;
-  m_totalBonusWin += result.bonusWin;
-  if (result.IsHit())
-    m_hitCount++;
-  m_totalSpins++;
-
+FlowGraphSimulator::SimulateScatterComponent(int numSpins) {
   SimulationStatistics stats;
-  stats.totalBet = m_betPerSpin;
-  stats.totalWin = result.totalWin;
-  stats.totalBaseWin = result.baseGameWin;
-  stats.totalScatterWin = result.scatterWin;
-  stats.totalBonusWin = result.bonusWin;
-  stats.hitCount = result.IsHit() ? 1 : 0;
-  stats.totalSpins = 1;
-  stats.allWins.push_back(result.totalWin);
+  stats.totalBet = static_cast<long long>(numSpins) * m_betPerSpin;
+  stats.totalSpins = numSpins;
 
+  auto engine = SlotEngine::CreateSlotEngine(m_config);
+
+  for (int i = 0; i < numSpins; ++i) {
+    auto result = engine->Spin();
+    stats.totalWin += result.scatterWin;
+    stats.totalScatterWin += result.scatterWin;
+  }
   return stats;
 }
 
-int FlowGraphSimulator::ReportStats(const SimulationStatistics &) { return 1; }
+// ---------------------------------------------------------------------
+// Constructor – builds the graph
+// ---------------------------------------------------------------------
 
-SimulationStatistics FlowGraphSimulator::Run(int numSpins) {
-  m_totalBet = 0;
-  m_totalWin = 0;
-  m_totalBaseWin = 0;
-  m_totalScatterWin = 0;
-  m_totalBonusWin = 0;
-  m_hitCount = 0;
-  m_totalSpins = 0;
+FlowGraphSimulator::FlowGraphSimulator(const SlotEngine::GameConfig &config,
+                                       int betPerSpin)
+    : m_config(config), m_betPerSpin(betPerSpin), m_broadcast(m_graph),
+      m_base_rtp_node(
+          m_graph, unlimited,
+          [this](int spins) { return SimulateBaseComponent(spins); }),
+      m_bonus_rtp_node(
+          m_graph, unlimited,
+          [this](int spins) { return SimulateBonusComponent(spins); }),
+      m_scatter_rtp_node(
+          m_graph, unlimited,
+          [this](int spins) { return SimulateScatterComponent(spins); }),
+      m_variance_node(m_graph, serial,
+                      [this](const SimulationStatistics &baseStats) {
+                        return ComputeVariance(baseStats);
+                      }),
+      m_bonus_scatter_join(m_graph),
+      m_freespin_impact_node(
+          m_graph, serial,
+          [this](const std::tuple<SimulationStatistics, SimulationStatistics>
+                     &data) { return ComputeFreespinImpact(data); }),
+      m_final_join(m_graph),
 
-  // Inject spins into the graph
-  for (int i = 0; i < numSpins; ++i) {
-    m_spin_node.try_put(i);
+      m_report_node(
+          m_graph, serial,
+          [this](const std::tuple<VarianceResult, FreespinImpact> &data) {
+            GenerateReport(data);
+            return 1;
+          }) {
+  // Build edges
+  make_edge(m_broadcast, m_base_rtp_node);
+  make_edge(m_broadcast, m_bonus_rtp_node);
+  make_edge(m_broadcast, m_scatter_rtp_node);
+
+  make_edge(m_base_rtp_node, m_variance_node);
+
+  make_edge(m_bonus_rtp_node, m_bonus_scatter_join);
+  make_edge(m_scatter_rtp_node, m_bonus_scatter_join);
+
+  make_edge(m_bonus_scatter_join, m_freespin_impact_node);
+
+  make_edge(m_variance_node, tbb::flow::input_port<0>(m_final_join));
+  make_edge(m_freespin_impact_node, tbb::flow::input_port<1>(m_final_join));
+  make_edge(m_final_join, m_report_node);
+}
+
+// ---------------------------------------------------------------------
+// Node computations
+// ---------------------------------------------------------------------
+
+FlowGraphSimulator::VarianceResult
+FlowGraphSimulator::ComputeVariance(const SimulationStatistics &baseStats) {
+  VarianceResult result;
+  result.stats = baseStats;
+
+  if (baseStats.allWins.empty()) {
+    result.variance = 0.0;
+    result.stddev = 0.0;
+    return result;
   }
 
-  // Wait for all work to finish
+  double mean =
+      static_cast<double>(baseStats.totalBaseWin) / baseStats.totalSpins;
+  double sumSq = 0.0;
+  for (long long w : baseStats.allWins) {
+    double diff = static_cast<double>(w) - mean;
+    sumSq += diff * diff;
+  }
+  result.variance = sumSq / baseStats.allWins.size();
+  result.stddev = std::sqrt(result.variance);
+  return result;
+}
+
+FlowGraphSimulator::FreespinImpact FlowGraphSimulator::ComputeFreespinImpact(
+    const std::tuple<SimulationStatistics, SimulationStatistics>
+        &bonusScatter) {
+  const auto &bonusStats = std::get<0>(bonusScatter);
+  const auto &scatterStats = std::get<1>(bonusScatter);
+
+  FreespinImpact impact;
+  double bonusRTP =
+      (bonusStats.totalBet > 0)
+          ? (static_cast<double>(bonusStats.totalWin) / bonusStats.totalBet) *
+                100.0
+          : 0.0;
+  double scatterRTP = (scatterStats.totalBet > 0)
+                          ? (static_cast<double>(scatterStats.totalWin) /
+                             scatterStats.totalBet) *
+                                100.0
+                          : 0.0;
+  impact.impact = bonusRTP - scatterRTP;
+  return impact;
+}
+
+void FlowGraphSimulator::GenerateReport(
+    const std::tuple<VarianceResult, FreespinImpact> &finalData) {
+  const auto &varRes = std::get<0>(finalData);
+  const auto &imp = std::get<1>(finalData);
+
+  std::cout << "\n===== FLOW GRAPH REPORT =====\n";
+  std::cout << std::fixed << std::setprecision(2);
+  std::cout << "Base RTP (simulated): " << varRes.stats.GetBaseRTP() << "%\n";
+  std::cout << "Bonus RTP (simulated): " << varRes.stats.GetBonusRTP() << "%\n";
+  std::cout << "Scatter RTP (simulated): " << varRes.stats.GetScatterRTP()
+            << "%\n";
+  std::cout << "Total RTP: " << varRes.stats.GetRTP() << "%\n";
+  std::cout << "Hit frequency: " << varRes.stats.GetHitFrequency() << "%\n";
+  std::cout << "Variance (base wins): " << varRes.variance << "\n";
+  std::cout << "Standard deviation: " << varRes.stddev << "\n";
+  std::cout << "Free‑spin impact (bonus RTP - scatter RTP): " << imp.impact
+            << " p.p.\n";
+  std::cout << "================================\n";
+}
+
+// ---------------------------------------------------------------------
+// Public Run method
+// ---------------------------------------------------------------------
+
+SimulationStatistics FlowGraphSimulator::Run(int numSpins) {
+  // Send the spin count to all three component nodes
+  m_broadcast.try_put(numSpins);
+
+  // Wait for graph to complete
   m_graph.wait_for_all();
 
-  SimulationStatistics stats;
-  stats.totalBet = m_totalBet.load();
-  stats.totalWin = m_totalWin.load();
-  stats.totalBaseWin = m_totalBaseWin.load();
-  stats.totalScatterWin = m_totalScatterWin.load();
-  stats.totalBonusWin = m_totalBonusWin.load();
-  stats.hitCount = m_hitCount.load();
-  stats.totalSpins = m_totalSpins.load();
-
-  return stats;
+  // The report node already printed everything.
+  // Return an empty stats (or we could combine from the final data, but not
+  // needed).
+  SimulationStatistics dummy;
+  return dummy;
 }

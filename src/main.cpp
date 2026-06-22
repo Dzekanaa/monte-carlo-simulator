@@ -68,7 +68,7 @@ int main(int argc, char *argv[]) {
 
       RTPCalculator rtpCalc(config);
       double rtp = stats.GetRTP();
-      bool valid = rtpCalc.ValidateRTP(rtp);
+      bool valid = rtpCalc.ValidateRTP(rtp, 1);
 
       std::cout << "\n RTP Validation:\n";
       std::cout << "   Expected RTP:      " << config.expectedRTP << "%\n";

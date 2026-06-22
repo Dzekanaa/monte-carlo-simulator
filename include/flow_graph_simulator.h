@@ -1,30 +1,47 @@
 #pragma once
+
 #include "../slot-engine/include/slot_engine.h"
 #include "statistics.h"
-#include <atomic>
 #include <tbb/flow_graph.h>
+#include <tuple>
 
 /**
- * @brief Monte Carlo simulator based on TBB flow::graph execution model.
+ * @brief Monte Carlo simulator based on the TBB flow::graph execution model.
  *
  * FlowGraphSimulator executes slot machine simulations using a directed
- * task graph. Each spin passes through a pipeline of nodes:
+ * task graph. The graph structure follows the specification:
  *
- *   Spin generation → Spin evaluation → Statistics aggregation
+ *   broadcast_node<int> ──┬──► base_rtp_node ──► variance_node ──┐
+ *                         ├──► bonus_rtp_node ──┐               │
+ *                         └──► scatter_rtp_node ─┼──► join_node ─┼──►
+ * freespin_impact_node ──┐ └────────────────────┘               │
+ *                         │                                     │
+ *   variance_node ────────┼─────────────────────────────────────┤
+ *                         │                                     │
+ *                         └────────► join_node ──► report_node
  *
+ * Each node simulates an independent game component, while dependencies
+ * are expressed through join nodes and directed edges.
  */
 class FlowGraphSimulator {
 public:
   /**
-   * @brief Constructs a flow graph simulator.
+   * @brief Constructs a FlowGraphSimulator instance.
+   *
+   * Creates the flow::graph and initializes all nodes according to the
+   * specified graph topology.
    *
    * @param config Slot game configuration used for simulation.
-   * @param betPerSpin Bet value applied to each spin.
+   * @param betPerSpin Bet amount applied to each spin.
    */
   FlowGraphSimulator(const SlotEngine::GameConfig &config, int betPerSpin);
 
   /**
-   * @brief Runs Monte Carlo simulation using a flow graph pipeline.
+   * @brief Runs the Monte Carlo simulation using the flow::graph pipeline.
+   *
+   * Sends the number of spins through the broadcast node, triggering all
+   * simulation branches in parallel. The graph executes until completion
+   * and the final results are reported through the report node.
    *
    * @param numSpins Number of spins to simulate.
    * @return Aggregated simulation statistics.
@@ -32,58 +49,136 @@ public:
   SimulationStatistics Run(int numSpins);
 
 private:
+  /// @brief Slot game configuration.
   SlotEngine::GameConfig m_config;
+
+  /// @brief Bet amount per spin.
   int m_betPerSpin;
 
-  /// @brief TBB flow graph managing execution pipeline.
+  /// @brief TBB flow graph managing the simulation pipeline.
   tbb::flow::graph m_graph;
 
+  /// @brief Broadcast node that distributes the spin count to all branches.
+  tbb::flow::broadcast_node<int> m_broadcast;
+
+  /// @brief Node responsible for simulating the base game component.
+  tbb::flow::function_node<int, SimulationStatistics> m_base_rtp_node;
+
+  /// @brief Node responsible for simulating the bonus game component.
+  tbb::flow::function_node<int, SimulationStatistics> m_bonus_rtp_node;
+
+  /// @brief Node responsible for simulating the scatter component.
+  tbb::flow::function_node<int, SimulationStatistics> m_scatter_rtp_node;
+
   /**
-   * @brief Node generating spins (input: spin index → output: SpinResult).
+   * @brief Contains variance analysis results.
    */
-  tbb::flow::function_node<int, SlotEngine::SpinResult> m_spin_node;
+  struct VarianceResult {
+    SimulationStatistics stats; ///< Original simulation statistics.
+    double variance;            ///< Variance of the win distribution.
+    double stddev;              ///< Standard deviation of the win distribution.
+  };
+
+  /// @brief Node that computes variance statistics from base game results.
+  tbb::flow::function_node<SimulationStatistics, VarianceResult>
+      m_variance_node;
+
+  /// @brief Join node combining bonus and scatter statistics.
+  tbb::flow::join_node<std::tuple<SimulationStatistics, SimulationStatistics>>
+      m_bonus_scatter_join;
 
   /**
-   * @brief Node processing a spin result into statistics.
+   * @brief Contains free spin impact analysis results.
    */
-  tbb::flow::function_node<SlotEngine::SpinResult, SimulationStatistics>
-      m_stats_node;
+  struct FreespinImpact {
+    double impact; ///< Difference between bonus RTP and scatter RTP
+                   ///< expressed in percentage points.
+  };
+
+  /// @brief Node that computes the RTP impact of free spins.
+  tbb::flow::function_node<
+      std::tuple<SimulationStatistics, SimulationStatistics>, FreespinImpact>
+      m_freespin_impact_node;
+
+  /// @brief Final join node combining variance and free spin impact results.
+  tbb::flow::join_node<std::tuple<VarianceResult, FreespinImpact>> m_final_join;
+
+  /// @brief Report node responsible for generating the final simulation report.
+  tbb::flow::function_node<std::tuple<VarianceResult, FreespinImpact>, int>
+      m_report_node;
+
+  // ========================================================================
+  // Component Simulation Methods
+  // ========================================================================
 
   /**
-   * @brief Final aggregation/reporting node.
-   */
-  tbb::flow::function_node<SimulationStatistics, int> m_report_node;
-
-  // Atomic accumulators for thread-safe aggregation
-  std::atomic<long long> m_totalBet{0};
-  std::atomic<long long> m_totalWin{0};
-  std::atomic<long long> m_totalBaseWin{0};
-  std::atomic<long long> m_totalScatterWin{0};
-  std::atomic<long long> m_totalBonusWin{0};
-  std::atomic<long long> m_hitCount{0};
-  std::atomic<int> m_totalSpins{0};
-
-  /**
-   * @brief Generates a single spin for the given index.
+   * @brief Simulates the base game component.
    *
-   * @param spinIndex Index of the spin in simulation.
-   * @return Result of generated spin.
+   * Executes the specified number of spins and collects statistics related
+   * to base game wins. All win values are stored for variance calculations.
+   *
+   * @param numSpins Number of spins to simulate.
+   * @return Base game statistics.
    */
-  SlotEngine::SpinResult GenerateSpin(int spinIndex);
+  SimulationStatistics SimulateBaseComponent(int numSpins);
 
   /**
-   * @brief Converts a spin result into statistical data.
+   * @brief Simulates the bonus game component.
    *
-   * @param result Spin result to process.
-   * @return Partial simulation statistics.
+   * Executes the specified number of spins and collects statistics related
+   * to bonus game wins.
+   *
+   * @param numSpins Number of spins to simulate.
+   * @return Bonus game statistics.
    */
-  SimulationStatistics ProcessSpin(const SlotEngine::SpinResult &result);
+  SimulationStatistics SimulateBonusComponent(int numSpins);
 
   /**
-   * @brief Aggregates and reports statistics from pipeline.
+   * @brief Simulates the scatter component.
    *
-   * @param stats Partial statistics from pipeline stage.
-   * @return Dummy integer for graph continuation.
+   * Executes the specified number of spins and collects statistics related
+   * to scatter wins.
+   *
+   * @param numSpins Number of spins to simulate.
+   * @return Scatter statistics.
    */
-  int ReportStats(const SimulationStatistics &stats);
+  SimulationStatistics SimulateScatterComponent(int numSpins);
+
+  // ========================================================================
+  // Graph Processing Methods
+  // ========================================================================
+
+  /**
+   * @brief Computes variance and standard deviation from base game statistics.
+   *
+   * Uses the allWins vector to calculate the variance of the win distribution.
+   *
+   * @param baseStats Base game statistics.
+   * @return VarianceResult containing the original statistics and computed
+   *         variance metrics.
+   */
+  VarianceResult ComputeVariance(const SimulationStatistics &baseStats);
+
+  /**
+   * @brief Computes the RTP impact of free spins.
+   *
+   * Calculates the difference between bonus RTP and scatter RTP.
+   *
+   * @param bonusScatter Tuple containing bonus and scatter statistics.
+   * @return FreespinImpact containing the calculated RTP contribution.
+   */
+  FreespinImpact ComputeFreespinImpact(
+      const std::tuple<SimulationStatistics, SimulationStatistics>
+          &bonusScatter);
+
+  /**
+   * @brief Generates and prints the final simulation report.
+   *
+   * Displays RTP contributions by component, hit frequency, variance,
+   * standard deviation, and free spin impact metrics.
+   *
+   * @param finalData Tuple containing VarianceResult and FreespinImpact.
+   */
+  void
+  GenerateReport(const std::tuple<VarianceResult, FreespinImpact> &finalData);
 };
