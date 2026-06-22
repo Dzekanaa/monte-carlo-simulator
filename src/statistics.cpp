@@ -68,35 +68,31 @@ double SimulationStatistics::GetBonusRTP() const {
 }
 
 void SimulationStatistics::PrintReport() const {
-  std::cout << "\n╔════════════════════════════════════════════════════════════"
-               "══════╗\n";
-  std::cout << "║                    MONTE CARLO RTP REPORT                    "
-               "   ║\n";
-  std::cout << "╚══════════════════════════════════════════════════════════════"
-               "════╝\n\n";
+  std::cout << "                    MONTE CARLO RTP REPORT                    ";
+  std::cout
+      << "--------------------------------------------------------------------";
 
   std::cout << std::fixed << std::setprecision(2);
 
-  std::cout << "📊 GENERAL STATISTICS:\n";
+  std::cout << " GENERAL STATISTICS:\n";
   std::cout << "   Total spins:        " << totalSpins << "\n";
   std::cout << "   Total bet:          " << totalBet << " coins\n";
   std::cout << "   Total win:          " << totalWin << " coins\n";
   std::cout << "   Net result:         " << (totalWin - totalBet)
             << " coins\n\n";
 
-  std::cout << "🎰 RTP BREAKDOWN:\n";
+  std::cout << " RTP BREAKDOWN:\n";
   std::cout << "   Total RTP:          " << GetRTP() << "%\n";
   std::cout << "   Base game RTP:      " << GetBaseRTP() << "%\n";
   std::cout << "   Scatter RTP:        " << GetScatterRTP() << "%\n";
   std::cout << "   Bonus RTP:          " << GetBonusRTP() << "%\n\n";
 
-  std::cout << "📈 VOLATILITY:\n";
+  std::cout << " VOLATILITY:\n";
   std::cout << "   Hit frequency:      " << GetHitFrequency() << "%\n";
   std::cout << "   Variance:           " << GetVariance() << "\n";
   std::cout << "   Std deviation:      " << GetStandardDeviation() << "\n\n";
 
-  std::cout << "🔢 WIN DISTRIBUTION (top 10):\n";
-  // Sort wins descending and show top 10
+  std::cout << " WIN DISTRIBUTION (top 10):\n";
   std::vector<long long> sortedWins = allWins;
   std::sort(sortedWins.begin(), sortedWins.end(), std::greater<long long>());
 

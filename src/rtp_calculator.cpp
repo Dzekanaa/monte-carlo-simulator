@@ -6,12 +6,8 @@ RTPCalculator::RTPCalculator(const SlotEngine::GameConfig &config)
     : m_config(config), m_expectedRTP(config.expectedRTP) {}
 
 double RTPCalculator::CalculateTheoreticalRTP() const {
-  // Analitički izračun RTP na osnovu verovatnoća
-  // Ovo je pojednostavljena verzija - u praksi bi se koristila Markov chain
-  // analiza
   double totalRTP = 0.0;
 
-  // Simuliraj sve moguće kombinacije (aproksimacija)
   std::random_device rd;
   std::mt19937 gen(rd());
   std::uniform_int_distribution<> dist(0, 1000);
@@ -52,7 +48,7 @@ RTPCalculator::CalculateConfidenceInterval(const SimulationStatistics &stats,
   double stdDev = stats.GetStandardDeviation();
   double n = stats.totalSpins;
 
-  // Z-score za 95% confidence level je 1.96
+  // Z-score for 95% confidence level is 1.96
   double zScore = 1.96;
   if (confidenceLevel == 0.99)
     zScore = 2.576;

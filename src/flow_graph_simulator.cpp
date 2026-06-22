@@ -5,6 +5,7 @@ using namespace tbb::flow;
 FlowGraphSimulator::FlowGraphSimulator(const SlotEngine::GameConfig &config,
                                        int betPerSpin)
     : m_config(config), m_betPerSpin(betPerSpin),
+
       m_spin_node(m_graph, unlimited, [this](int) { return GenerateSpin(0); }),
       m_stats_node(
           m_graph, unlimited,
@@ -12,6 +13,7 @@ FlowGraphSimulator::FlowGraphSimulator(const SlotEngine::GameConfig &config,
       m_report_node(m_graph, serial, [this](const SimulationStatistics &s) {
         return ReportStats(s);
       }) {
+
   // Connect the nodes
   make_edge(m_spin_node, m_stats_node);
   make_edge(m_stats_node, m_report_node);
@@ -24,7 +26,6 @@ SlotEngine::SpinResult FlowGraphSimulator::GenerateSpin(int) {
 
 SimulationStatistics
 FlowGraphSimulator::ProcessSpin(const SlotEngine::SpinResult &result) {
-  // Accumulate atomically
   m_totalBet += m_betPerSpin;
   m_totalWin += result.totalWin;
   m_totalBaseWin += result.baseGameWin;
@@ -34,7 +35,6 @@ FlowGraphSimulator::ProcessSpin(const SlotEngine::SpinResult &result) {
     m_hitCount++;
   m_totalSpins++;
 
-  // Build local statistics for this spin (will be sent downstream)
   SimulationStatistics stats;
   stats.totalBet = m_betPerSpin;
   stats.totalWin = result.totalWin;
@@ -48,13 +48,9 @@ FlowGraphSimulator::ProcessSpin(const SlotEngine::SpinResult &result) {
   return stats;
 }
 
-int FlowGraphSimulator::ReportStats(const SimulationStatistics &) {
-  // This node just returns a signal; we don't need to process further
-  return 1;
-}
+int FlowGraphSimulator::ReportStats(const SimulationStatistics &) { return 1; }
 
 SimulationStatistics FlowGraphSimulator::Run(int numSpins) {
-  // Reset atomic accumulators
   m_totalBet = 0;
   m_totalWin = 0;
   m_totalBaseWin = 0;
@@ -71,7 +67,6 @@ SimulationStatistics FlowGraphSimulator::Run(int numSpins) {
   // Wait for all work to finish
   m_graph.wait_for_all();
 
-  // Build final statistics from atomics
   SimulationStatistics stats;
   stats.totalBet = m_totalBet.load();
   stats.totalWin = m_totalWin.load();

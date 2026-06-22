@@ -54,12 +54,12 @@ SimulationStatistics MonteCarloSimulator::RunParallel(int numSpins) {
 
         for (int i = range.begin(); i < range.end(); ++i) {
           auto spinStats = PerformSingleSpin(engine);
-          localStats += spinStats; // ← koristi operator+=
+          localStats += spinStats;
         }
         return localStats;
       },
       [](const SimulationStatistics &a, const SimulationStatistics &b) {
-        return a + b; // ← koristi globalni operator+
+        return a + b;
       });
 
   return totalStats;
@@ -74,51 +74,52 @@ MonteCarloSimulator::BenchmarkResult
 MonteCarloSimulator::Benchmark(int numSpins, int maxThreads) {
   BenchmarkResult result;
 
-  std::cout << "\n🔬 BENCHMARKING with " << numSpins << " spins\n";
-  std::cout << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-               "━━━━\n\n";
+  std::cout << "\n BENCHMARKING with " << numSpins << " spins\n";
+  std::cout << "---------------------------------------------------------------"
+               "---\n\n";
 
-  // Sekvencijalno
-  auto start = std::chrono::high_resolution_clock::now();
-  auto seqStats = RunSequential(numSpins);
-  auto seqTime = std::chrono::duration<double>(
-                     std::chrono::high_resolution_clock::now() - start)
-                     .count();
+  // Sequential
+  std::chrono::time_point start = std::chrono::high_resolution_clock::now();
+  SimulationStatistics seqStats = RunSequential(numSpins);
+  double seqTime = std::chrono::duration<double>(
+                       std::chrono::high_resolution_clock::now() - start)
+                       .count();
   result.sequentialTime = seqTime;
   result.stats = seqStats;
 
-  std::cout << "✅ Sequential:    " << std::fixed << std::setprecision(2)
+  std::cout << "Sequential:    " << std::fixed << std::setprecision(2)
             << seqTime << "s\n";
 
-  // Paralelno sa različitim brojem niti
+  // Parallel with different number of threads
   std::vector<double> parallelTimes;
   std::vector<double> flowGraphTimes;
 
-  for (int threads = 1; threads <= maxThreads; threads *= 2) {
-    // Postavi broj niti
+  for (int threads = 2; threads <= maxThreads; threads *= 2) {
     tbb::global_control control(tbb::global_control::max_allowed_parallelism,
                                 threads);
 
     // Parallel reduce
-    auto startPar = std::chrono::high_resolution_clock::now();
-    auto parStats = RunParallel(numSpins);
-    auto parTime = std::chrono::duration<double>(
-                       std::chrono::high_resolution_clock::now() - startPar)
-                       .count();
+    std::chrono::time_point startPar =
+        std::chrono::high_resolution_clock::now();
+    SimulationStatistics parStats = RunParallel(numSpins);
+    double parTime = std::chrono::duration<double>(
+                         std::chrono::high_resolution_clock::now() - startPar)
+                         .count();
     parallelTimes.push_back(parTime);
 
     // Flow graph
-    auto startFlow = std::chrono::high_resolution_clock::now();
-    auto flowStats = RunFlowGraph(numSpins);
-    auto flowTime = std::chrono::duration<double>(
-                        std::chrono::high_resolution_clock::now() - startFlow)
-                        .count();
+    std::chrono::time_point startFlow =
+        std::chrono::high_resolution_clock::now();
+    SimulationStatistics flowStats = RunFlowGraph(numSpins);
+    double flowTime = std::chrono::duration<double>(
+                          std::chrono::high_resolution_clock::now() - startFlow)
+                          .count();
     flowGraphTimes.push_back(flowTime);
 
-    std::cout << "✅ Parallel (" << std::setw(2) << threads
+    std::cout << " Parallel (" << std::setw(2) << threads
               << " threads): " << std::fixed << std::setprecision(2) << parTime
               << "s (speedup: " << seqTime / parTime << "x)\n";
-    std::cout << "✅ FlowGraph (" << std::setw(2) << threads
+    std::cout << " FlowGraph (" << std::setw(2) << threads
               << " threads): " << flowTime
               << "s (speedup: " << seqTime / flowTime << "x)\n\n";
   }
