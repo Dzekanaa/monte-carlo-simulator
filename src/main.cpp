@@ -156,8 +156,6 @@ int main(int argc, char *argv[]) {
                 << std::setprecision(2) << result.stats.GetHitFrequency()
                 << "%\n";
 
-      // Opciono: ispisati i flow graph report ako je potrebno
-      std::cout << "\n Note: Flow graph report was printed during benchmark.\n";
     }
 
     else {
