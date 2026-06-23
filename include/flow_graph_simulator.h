@@ -83,7 +83,11 @@ private:
   tbb::flow::function_node<SimulationStatistics, VarianceResult>
       m_variance_node;
 
-  /// @brief Join node combining bonus and scatter statistics.
+  /// @brief Buffer nodes for bonus and scatter (to synchronize join)
+  tbb::flow::buffer_node<SimulationStatistics> m_bonus_buffer;
+  tbb::flow::buffer_node<SimulationStatistics> m_scatter_buffer;
+
+  /// @brief Join node: waits for both bonus and scatter
   tbb::flow::join_node<std::tuple<SimulationStatistics, SimulationStatistics>>
       m_bonus_scatter_join;
 
@@ -106,10 +110,6 @@ private:
   /// @brief Report node responsible for generating the final simulation report.
   tbb::flow::function_node<std::tuple<VarianceResult, FreespinImpact>, int>
       m_report_node;
-
-  // ========================================================================
-  // Component Simulation Methods
-  // ========================================================================
 
   /**
    * @brief Simulates the base game component.

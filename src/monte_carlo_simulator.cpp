@@ -3,6 +3,7 @@
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 
 MonteCarloSimulator::MonteCarloSimulator(const SlotEngine::GameConfig &config,
                                          int betPerSpin)
@@ -27,11 +28,12 @@ MonteCarloSimulator::PerformSingleSpin(SlotEngine::ISlotEngine &engine) {
 }
 
 SimulationStatistics MonteCarloSimulator::RunSequential(int numSpins) {
-  auto engine = SlotEngine::CreateSlotEngine(m_config);
+  std::unique_ptr<SlotEngine::ISlotEngine> engine =
+      SlotEngine::CreateSlotEngine(m_config);
   SimulationStatistics totalStats;
 
   for (int i = 0; i < numSpins; ++i) {
-    auto spinStats = PerformSingleSpin(*engine);
+    SimulationStatistics spinStats = PerformSingleSpin(*engine);
     totalStats += spinStats;
   }
 
@@ -50,10 +52,10 @@ SimulationStatistics MonteCarloSimulator::RunParallel(int numSpins) {
         if (!enginePool.local()) {
           enginePool.local() = SlotEngine::CreateSlotEngine(m_config);
         }
-        auto &engine = *enginePool.local();
+        SlotEngine::ISlotEngine &engine = *enginePool.local();
 
         for (int i = range.begin(); i < range.end(); ++i) {
-          auto spinStats = PerformSingleSpin(engine);
+          SimulationStatistics spinStats = PerformSingleSpin(engine);
           localStats += spinStats;
         }
         return localStats;

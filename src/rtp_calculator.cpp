@@ -65,7 +65,5 @@ RTPCalculator::CalculateConfidenceInterval(const SimulationStatistics &stats,
 
 double RTPCalculator::CalculateWinProbability(const SlotEngine::Symbol &symbol,
                                               int count) const {
-  // Verovatnoća dobijanja count simbola na paylini
-  // Ovo je pojednostavljena verzija
   return 0.01; // placeholder
 }

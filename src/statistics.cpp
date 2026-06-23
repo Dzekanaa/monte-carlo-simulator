@@ -68,9 +68,10 @@ double SimulationStatistics::GetBonusRTP() const {
 }
 
 void SimulationStatistics::PrintReport() const {
-  std::cout << "                    MONTE CARLO RTP REPORT                    ";
+  std::cout << "                    MONTE CARLO RTP REPORT                    "
+            << std::endl;
   std::cout
-      << "--------------------------------------------------------------------";
+      << "-----------------------------------------------------------------\n";
 
   std::cout << std::fixed << std::setprecision(2);
 
